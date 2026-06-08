@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eines OAC - Auditor de Visites</title>
+<link rel="stylesheet" href="estils.css">
+</head>
+<body>
+<header>
+  <img src="logo_mossos.png" alt="Mossos" onerror="this.style.display='none'">
+  <div>
+    <h1>Auditor de Visites — Web</h1>
+    <p>Eines OAC · Regió Policial Central · Mossos d'Esquadra</p>
+  </div>
+</header>
+
+<main>
+  <a class="nav-back" href="index.html">← Tornar al menú</a>
+
+  <div class="avis">
+    <strong>Privadesa:</strong> tot el processament es fa <strong>al teu propi ordinador</strong>,
+    dins del navegador. Els Excels que selecciones <strong>no s'envien a cap servidor</strong>;
+    les dades no surten d'aquest equip.
+  </div>
+
+  <div class="card">
+    <div id="carregant">⏳ Carregant el motor de càlcul (Pyodide)… pot trigar uns segons la primera vegada.</div>
+
+    <div id="zona-app" class="hidden">
+      <label class="dropzone" id="dz-visites" for="file-visites">
+        <div class="big">📥</div>
+        <p class="titol">Arxiu de VISITES</p>
+        <p>Arrossega'l aquí o fes clic</p>
+        <div class="file-nom" id="nom-visites"></div>
+      </label>
+      <input type="file" id="file-visites" accept=".xlsx,.xls">
+
+      <label class="dropzone" id="dz-entitats" for="file-entitats" style="margin-top:14px;">
+        <div class="big">📥</div>
+        <p class="titol">Arxiu d'ENTITATS</p>
+        <p>Arrossega'l aquí o fes clic</p>
+        <div class="file-nom" id="nom-entitats"></div>
+      </label>
+      <input type="file" id="file-entitats" accept=".xlsx,.xls">
+
+      <div class="opcions">
+        <strong style="font-size:0.9rem;">Quins informes vols generar?</strong>
+        <label><input type="radio" name="informe" value="ambdos" checked> Tots (registre validat + informes per comissaria + consolidat)</label>
+        <label><input type="radio" name="informe" value="consolidat"> Registre validat + informe consolidat (un sol Excel de totes les comissaries)</label>
+        <label><input type="radio" name="informe" value="individuals"> Registre validat + un informe per cada comissaria</label>
+        <label><input type="radio" name="informe" value="cap"> Només el registre validat</label>
+      </div>
+
+      <div class="botonera">
+        <button id="btn-processar" disabled>Processar</button>
+      </div>
+
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="resultats">
+    <h2 style="margin-top:0; color:var(--blau)">Resultats</h2>
+    <div class="stats" id="stats"></div>
+    <div class="botonera">
+      <button id="btn-descarregar">⬇️ Descarregar tot (ZIP)</button>
+    </div>
+    <div class="taula-wrap">
+      <table id="taula-fitxers"></table>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Eines OAC · Desenvolupat per TIP 15713 · El processament es realitza localment al navegador (Pyodide / WebAssembly).
+</footer>
+
+<script src="pyodide/pyodide.js"></script>
+<script>
+// ---- Configuració de l'auditor (secció 'auditor' del config.json) ----
+const CONFIG_AUDITOR = {
+  "filas_skip": 5,
+  "tiempo_espera_minimo": 30,
+  "minutos_limite_tramite": 15,
+  "mapeo_comisarias": {
+    "Comissaria de Manresa": "ABP BAGES-MOIANÈS",
+    "Comissaria de Moià": "ABP BAGES-MOIANÈS",
+    "Comissaria de Vic": "ABP OSONA",
+    "Comissaria d'Igualada": "ABP ANOIA",
+    "Comissaria de Solsona": "ABP SOLSONÈS",
+    "Comissaria de Berga": "ABP BERGUEDÀ",
+    "OAC CONJUNTA DE MANRESA": "ABP BAGES-MOIANÈS"
+  },
+  "mapeo_columnes_visites": {
+    "Fitxa SIP Entitat": "Fitxa SIP Entitat", "Motiu Visita": "Motiu Visita",
+    "Instal·lació": "Instal·lació", "Data Inici Visita": "Data Inici Visita",
+    "Hora Inici Visita": "Hora Inici Visita", "Data Atenció Visita": "Data Atenció Visita",
+    "Hora atenció visita": "Hora atenció visita", "Data Fi Visita": "Data Fi Visita",
+    "Hora Fi Visita": "Hora Fi Visita", "Temps d'espera": "Temps d'espera"
+  },
+  "mapeo_columnes_entitats": {
+    "Persona Física": "Persona Física", "Procediment": "Procediment",
+    "Tipus tramit": "Tipus tràmit", "Agent instructor tramit": "Agent instructor tràmit",
+    "Unitat tramit (ui)": "Unitat tramit (ui)", "Data inici tramit": "Data inici tràmit",
+    "Hora inici tràmit": "Hora inici tràmit", "Unnamed: 2": "Unnamed: 2", "Unnamed: 5": "Unnamed: 5"
+  },
+  "codigos_validacion": [
+    "1001","1002","1003","1004","1005","1006","1007","1008","1009","1010","1011","1012",
+    "1013","1014","1016","1017","1018","1019","1020","1021","1022","1023","1024","2198",
+    "3001","3002","3003","3004","3005","3006","3007","3008","3009","3010","3011","3012",
+    "3013","3014","3015","3016","3017","3018","3021","3022","3023","3024","3025","3026",
+    "3027","3030","3040","3041","3049","3050","3051","3052","3053","3054","3055","3060",
+    "3061","3062","3063","3064","3072","3080","3097","3098","3099","3100","3120","3130",
+    "3140","3160","3185","3200","3600","3601","3997","3998","3999","4007","4008","4015",
+    "4022","4078","4079","4083","4084","4092","4111","4116","4117","4163","4211","4212",
+    "4223","4224","4225","4299","4500","4891","6000","6001","6005","6017","6022","6023",
+    "6029","6031","6037","6038","6042","6043","6067","6071","6072","6073","6096","6200",
+    "6201","6202","6203","6300","6301","6302","8001","9024","9025","9026","9030","9031",
+    "9032","9033","9034","9035","A0003","CT002","D01","D01-T","D04","D04T","D04b","D04bT",
+    "D05","D05-T","D06","D07","D07-T","D08","D08-T","D16","D16-T","D17","D17.","D30",
+    "D30T","D34","IMMOB","INTOX","NOTVG","PDACT","PDLOE","S01"
+  ]
+};
+
+let pyodide = null;
+let visitesBytes = null, visitesNom = null;
+let entitatsBytes = null, entitatsNom = null;
+let zipBytes = null, zipNom = null;
+
+const $ = (id) => document.getElementById(id);
+
+function log(msg) { const el = $("log"); el.textContent += msg; el.scrollTop = el.scrollHeight; }
+function setProgress(n, total) {
+  const wrap = $("progress-wrap"), bar = $("progress-bar");
+  wrap.style.display = "block";
+  bar.style.width = total > 0 ? Math.min(100, (100 * n / total)) + "%" : "0%";
+}
+function estatCarrega(msg) { const el = $("carregant"); if (el) el.textContent = msg; }
+
+function comprovaLlest() {
+  $("btn-processar").disabled = !(visitesBytes && entitatsBytes && pyodide);
+}
+
+async function initPyodide() {
+  // Tot s'autoallotja a ./pyodide/ (mateix origen que la pàgina): no es depèn de
+  // cap CDN extern ni de PyPI, que l'entorn corporatiu bloqueja en segon pla.
+  estatCarrega("⏳ (1/4) Carregant Pyodide…");
+  pyodide = await loadPyodide({ indexURL: "pyodide/" });
+
+  estatCarrega("⏳ (2/4) Carregant paquets…");
+  // Càrrega SEQÜENCIAL (un a un): carregar-los en paral·lel feia que algunes
+  // descàrregues caiguessin i deixessin dependències sense instal·lar.
+  for (const p of ["six", "python-dateutil", "pytz", "packaging", "micropip", "numpy", "pandas"]) {
+    estatCarrega("⏳ (2/4) Carregant " + p + "…");
+    await pyodide.loadPackage(p);
+  }
+
+  estatCarrega("⏳ (3/4) Instal·lant openpyxl…");
+  const baseWheels = new URL("pyodide/", location.href).href;
+  pyodide.globals.set("OPENPYXL_URL", baseWheels + "openpyxl-3.1.5-py2.py3-none-any.whl");
+  pyodide.globals.set("ETXML_URL", baseWheels + "et_xmlfile-2.0.0-py3-none-any.whl");
+  await pyodide.runPythonAsync(`
+import micropip
+await micropip.install([OPENPYXL_URL, ETXML_URL], deps=False)
+`);
+
+  estatCarrega("⏳ (4/4) Preparant l'aplicació…");
+  log("Paquets carregats.\n");
+
+  const resp = await fetch("auditor_core.py");
+  pyodide.FS.writeFile("auditor_core.py", await resp.text());
+
+  try {
+    const logoResp = await fetch("logo_mossos.png");
+    if (logoResp.ok) pyodide.FS.writeFile("logo_mossos.png", new Uint8Array(await logoResp.arrayBuffer()));
+  } catch (e) { /* sense logo */ }
+
+  pyodide.globals.set("CONFIG_JS", pyodide.toPy(CONFIG_AUDITOR));
+  await pyodide.runPythonAsync(`
+import auditor_core, os
+auditor_core.set_config(CONFIG_JS.to_py() if hasattr(CONFIG_JS, 'to_py') else dict(CONFIG_JS))
+auditor_core.set_logo_path("logo_mossos.png" if os.path.exists("logo_mossos.png") else None)
+`);
+
+  $("carregant").classList.add("hidden");
+  $("zona-app").classList.remove("hidden");
+  log("Llest. Selecciona els arxius de visites i entitats.\n");
+  comprovaLlest();
+}
+
+function fesCarregadorFitxer(tipus) {
+  return (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const bytes = new Uint8Array(e.target.result);
+      if (tipus === "visites") { visitesBytes = bytes; visitesNom = file.name; $("nom-visites").textContent = "📎 " + file.name; $("dz-visites").classList.add("carregat"); }
+      else { entitatsBytes = bytes; entitatsNom = file.name; $("nom-entitats").textContent = "📎 " + file.name; $("dz-entitats").classList.add("carregat"); }
+      comprovaLlest();
+    };
+    reader.readAsArrayBuffer(file);
+  };
+}
+
+function opcioInforme() {
+  const r = document.querySelector('input[name="informe"]:checked');
+  return r ? r.value : "ambdos";
+}
+
+async function processar() {
+  if (!visitesBytes || !entitatsBytes) return;
+  $("btn-processar").disabled = true;
+  $("resultats").classList.add("hidden");
+  $("log").textContent = "";
+  setProgress(0, 100);
+
+  pyodide.globals.set("VIS_BYTES", visitesBytes);
+  pyodide.globals.set("ENT_BYTES", entitatsBytes);
+  pyodide.globals.set("OPCIO", opcioInforme());
+  pyodide.globals.set("js_log", log);
+  pyodide.globals.set("js_progress", setProgress);
+
+  try {
+    const result = await pyodide.runPythonAsync(`
+import auditor_core, json
+vb = bytes(VIS_BYTES.to_py()) if hasattr(VIS_BYTES, 'to_py') else bytes(VIS_BYTES)
+eb = bytes(ENT_BYTES.to_py()) if hasattr(ENT_BYTES, 'to_py') else bytes(ENT_BYTES)
+opcio = str(OPCIO)
+
+def _log(m): js_log(m)
+def _prog(n, t): js_progress(n, t)
+
+res = auditor_core.processa_auditoria(vb, eb, opcion_informe=opcio, log_cb=_log, progress_cb=_prog)
+zip_bytes = res["zip"]
+_log("\\n" + auditor_core.resum_text(res["stats"]) + "\\n")
+json.dumps({"stats": res["stats"], "noms": res["noms_fitxers"]})
+    `);
+
+    zipBytes = pyodide.globals.get("zip_bytes").toJs();
+    mostrarResultats(JSON.parse(result));
+
+    const stamp = new Date().toISOString().slice(0,19).replace(/[-:T]/g, "").slice(0,15);
+    zipNom = `Auditoria_Visites_${stamp}.zip`;
+  } catch (err) {
+    log("\n❌ ERROR: " + err.message + "\n");
+  } finally {
+    $("btn-processar").disabled = false;
+    setProgress(100, 100);
+  }
+}
+
+function mostrarResultats(meta) {
+  const s = meta.stats;
+  $("stats").innerHTML = `
+    <div class="stat"><span class="num">${s.visites_filtrades}</span><span class="lbl">Visites &gt; mínim</span></div>
+    <div class="stat"><span class="num">${s.registres_validats}</span><span class="lbl">Registres validats</span></div>
+    <div class="stat"><span class="num">${s.registres_positius}</span><span class="lbl">Positius</span></div>
+    <div class="stat"><span class="num">${s.confirmacions_professional}</span><span class="lbl">Professionals</span></div>
+    <div class="stat"><span class="num">${s.comissaries}</span><span class="lbl">Comissaries</span></div>
+    <div class="stat"><span class="num">${s.num_fitxers}</span><span class="lbl">Fitxers</span></div>
+  `;
+  const noms = meta.noms;
+  const taula = $("taula-fitxers");
+  let html = "<thead><tr><th>Fitxers generats (dins del ZIP)</th></tr></thead><tbody>";
+  for (const n of noms) html += `<tr><td>${n}</td></tr>`;
+  taula.innerHTML = html + "</tbody>";
+  $("resultats").classList.remove("hidden");
+}
+
+function descarregar() {
+  if (!zipBytes) return;
+  const blob = new Blob([zipBytes], {type: "application/zip"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = zipNom || "Auditoria_Visites.zip"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  initPyodide().catch(e => {
+    $("carregant").textContent = "❌ No s'ha pogut carregar Pyodide: " + e.message;
+  });
+
+  const carregaVis = fesCarregadorFitxer("visites");
+  const carregaEnt = fesCarregadorFitxer("entitats");
+
+  $("file-visites").addEventListener("change", (e) => { if (e.target.files[0]) carregaVis(e.target.files[0]); });
+  $("file-entitats").addEventListener("change", (e) => { if (e.target.files[0]) carregaEnt(e.target.files[0]); });
+
+  for (const [dzId, carrega] of [["dz-visites", carregaVis], ["dz-entitats", carregaEnt]]) {
+    const dz = $(dzId);
+    dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("dragover"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("dragover"));
+    dz.addEventListener("drop", (e) => {
+      e.preventDefault(); dz.classList.remove("dragover");
+      if (e.dataTransfer.files[0]) carrega(e.dataTransfer.files[0]);
+    });
+  }
+
+  $("btn-processar").addEventListener("click", processar);
+  $("btn-descarregar").addEventListener("click", descarregar);
+});
+</script>
+</body>
+</html>

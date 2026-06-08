@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eines OAC — Mossos d'Esquadra</title>
+<link rel="stylesheet" href="estils.css">
+</head>
+<body>
+<header>
+  <img src="logo_mossos.png" alt="Mossos" onerror="this.style.display='none'">
+  <div>
+    <h1>Eines OAC — Web</h1>
+    <p>Regió Policial Central · Mossos d'Esquadra</p>
+  </div>
+</header>
+
+<main>
+  <div class="avis">
+    <strong>Privadesa:</strong> totes les eines processen els fitxers
+    <strong>al teu propi ordinador</strong>, dins del navegador. Els Excels que selecciones
+    <strong>no s'envien a cap servidor</strong>; les dades no surten d'aquest equip.
+  </div>
+
+  <div class="launcher-grid">
+    <a class="launcher-card" href="auditor.html">
+      <div class="ico">📋</div>
+      <h2>Auditor de Visites</h2>
+      <p>Valida el llibre de visites creuant visites i tràmits. Genera el registre validat
+         i els informes per comissaria.</p>
+    </a>
+    <a class="launcher-card" href="corregidor.html">
+      <div class="ico">🛠️</div>
+      <h2>Corregidor d'Àmbits</h2>
+      <p>Revisa els àmbits de tramitació i suggereix correccions segons la pauta
+         (estafes, POE…). Genera l'Excel corregit.</p>
+    </a>
+  </div>
+</main>
+
+<footer>
+  Eines OAC · Desenvolupat per TIP 15713 · El processament es realitza localment al navegador (Pyodide / WebAssembly).
+</footer>
+</body>
+</html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eines OAC - Corregidor d'Àmbits</title>
+<link rel="stylesheet" href="estils.css">
+</head>
+<body>
+<header>
+  <img src="logo_mossos.png" alt="Mossos" onerror="this.style.display='none'">
+  <div>
+    <h1>Corregidor d'Àmbits — Web</h1>
+    <p>Eines OAC · Regió Policial Central · Mossos d'Esquadra</p>
+  </div>
+</header>
+
+<main>
+  <a class="nav-back" href="index.html">← Tornar al menú</a>
+
+  <div class="avis">
+    <strong>Privadesa:</strong> tot el processament es fa <strong>al teu propi ordinador</strong>,
+    dins del navegador. L'Excel que selecciones <strong>no s'envia a cap servidor</strong>;
+    les dades no surten d'aquest equip.
+  </div>
+
+  <div class="card">
+    <div id="carregant">⏳ Carregant el motor de càlcul (Pyodide)… pot trigar uns segons la primera vegada.</div>
+
+    <div id="zona-app" class="hidden">
+      <label class="dropzone" id="dropzone" for="file-input">
+        <div class="big">📄</div>
+        <p class="titol">Arrossega l'Excel d'àmbits aquí</p>
+        <p>o fes clic per seleccionar-lo</p>
+      </label>
+      <input type="file" id="file-input" accept=".xlsx,.xls">
+
+      <div class="botonera">
+        <span id="fitxer-nom">Cap fitxer seleccionat</span>
+        <button id="btn-processar" disabled>Processar</button>
+      </div>
+
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="resultats">
+    <h2 style="margin-top:0; color:var(--blau)">Resultats</h2>
+    <div class="stats" id="stats"></div>
+    <div class="botonera">
+      <button id="btn-descarregar">⬇️ Descarregar Excel corregit</button>
+    </div>
+    <div class="taula-wrap">
+      <table id="taula-correccions"></table>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Eines OAC · Desenvolupat per TIP 15713 · El processament es realitza localment al navegador (Pyodide / WebAssembly).
+</footer>
+
+<script src="pyodide/pyodide.js"></script>
+<script>
+// ---- Configuració del corregidor (secció 'corregidor' del config.json) ----
+const CONFIG_CORREGIDOR = {
+  "excel": {
+    "skiprows": 5,
+    "columnes_obligatories": [
+      "Ambit procediment", "Tipus fet (nivell 2)", "Tipus punt", "Motiu resolució",
+      "Procediment", "Data Inici (fet)", "Hora (franja) Inici (fet)",
+      "Nom Vial  del fet", "Tipus vial", "Unitat (ui)"
+    ],
+    "validar_columnes": true
+  },
+  "fitxers": {
+    "sufix_sortida": "_CORREGIT_",
+    "unitats_filtrar": [
+      "Policia local de cardona", "Policia local de manresa", "Policia local de navàs",
+      "Policia local de sallent", "Policia local de sant fruitós de bages",
+      "Policia local de sant joan de vilatorrada", "Policia local de sant vicenç de castellet",
+      "Policia local de santpedor", "Policia local de súria", "Usc manresa"
+    ]
+  },
+  "informe_excel": {
+    "nom_full_original": "Dades Originals",
+    "nom_full_informe": "Informe",
+    "fila_logo_altura": 60, "fila_titol_altura": 25, "fila_subtitol_altura": 18,
+    "fila_capcalera_altura": 20, "logo_ample": 400, "logo_altura": 60,
+    "celles_logo": "A1:G1",
+    "ancho_columnes": {"B":50,"C":14,"D":18,"E":25,"F":58,"G":25,"H":42,"I":35}
+  },
+  "horari_nocturn": {"hora_inici": 22, "hora_fi": 7},
+  "regles_desactivades": []
+};
+
+let pyodide = null;
+let fitxerBytes = null;
+let fitxerNom = null;
+let resultatBytes = null;
+let resultatNom = null;
+
+const $ = (id) => document.getElementById(id);
+
+function log(msg) {
+  const el = $("log");
+  el.textContent += msg;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setProgress(n, total) {
+  const wrap = $("progress-wrap");
+  const bar = $("progress-bar");
+  wrap.style.display = "block";
+  bar.style.width = total > 0 ? Math.min(100, (100 * n / total)) + "%" : "0%";
+}
+
+function estatCarrega(msg) {
+  const el = $("carregant");
+  if (el) el.textContent = msg;
+}
+
+async function initPyodide() {
+  // Tot s'autoallotja a ./pyodide/ (mateix origen que la pàgina): no es depèn de
+  // cap CDN extern ni de PyPI, que l'entorn corporatiu bloqueja en segon pla.
+  estatCarrega("⏳ (1/4) Carregant Pyodide…");
+  pyodide = await loadPyodide({ indexURL: "pyodide/" });
+
+  estatCarrega("⏳ (2/4) Carregant paquets…");
+  // Càrrega SEQÜENCIAL (un a un): carregar-los en paral·lel feia que algunes
+  // descàrregues caiguessin i deixessin dependències sense instal·lar.
+  for (const p of ["six", "python-dateutil", "pytz", "packaging", "micropip", "numpy", "pandas"]) {
+    estatCarrega("⏳ (2/4) Carregant " + p + "…");
+    await pyodide.loadPackage(p);
+  }
+
+  estatCarrega("⏳ (3/4) Instal·lant openpyxl…");
+  const baseWheels = new URL("pyodide/", location.href).href;
+  pyodide.globals.set("OPENPYXL_URL", baseWheels + "openpyxl-3.1.5-py2.py3-none-any.whl");
+  pyodide.globals.set("ETXML_URL", baseWheels + "et_xmlfile-2.0.0-py3-none-any.whl");
+  await pyodide.runPythonAsync(`
+import micropip
+await micropip.install([OPENPYXL_URL, ETXML_URL], deps=False)
+`);
+
+  estatCarrega("⏳ (4/4) Preparant l'aplicació…");
+  log("Paquets carregats.\n");
+
+  const resp = await fetch("corregidor_core.py");
+  pyodide.FS.writeFile("corregidor_core.py", await resp.text());
+
+  try {
+    const logoResp = await fetch("logo_mossos.png");
+    if (logoResp.ok) {
+      pyodide.FS.writeFile("logo_mossos.png", new Uint8Array(await logoResp.arrayBuffer()));
+    }
+  } catch (e) { /* sense logo */ }
+
+  pyodide.globals.set("CONFIG_JS", pyodide.toPy(CONFIG_CORREGIDOR));
+  await pyodide.runPythonAsync(`
+import corregidor_core
+corregidor_core.set_config(CONFIG_JS.to_py() if hasattr(CONFIG_JS, 'to_py') else dict(CONFIG_JS))
+`);
+
+  $("carregant").classList.add("hidden");
+  $("zona-app").classList.remove("hidden");
+  log("Llest. Selecciona un Excel d'àmbits per processar.\n");
+}
+
+function carregarFitxer(file) {
+  fitxerNom = file.name;
+  $("fitxer-nom").textContent = "📎 " + file.name;
+  $("dropzone").classList.add("carregat");
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    fitxerBytes = new Uint8Array(e.target.result);
+    $("btn-processar").disabled = false;
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function processar() {
+  if (!fitxerBytes) return;
+  $("btn-processar").disabled = true;
+  $("resultats").classList.add("hidden");
+  $("log").textContent = "";
+  setProgress(0, 100);
+
+  pyodide.globals.set("EXCEL_BYTES", fitxerBytes);
+  pyodide.globals.set("js_log", log);
+  pyodide.globals.set("js_progress", setProgress);
+
+  try {
+    const result = await pyodide.runPythonAsync(`
+import corregidor_core, json
+data = bytes(EXCEL_BYTES.to_py()) if hasattr(EXCEL_BYTES, 'to_py') else bytes(EXCEL_BYTES)
+
+def _log(m): js_log(m)
+def _prog(n, t): js_progress(n, t)
+
+df, df_corr, stats = corregidor_core.processa_bytes(data, log_cb=_log, progress_cb=_prog)
+import os
+logo = "logo_mossos.png" if os.path.exists("logo_mossos.png") else None
+out_bytes = corregidor_core.genera_sortida_bytes(df, df_corr, stats, logo_path=logo, log_cb=_log)
+resum = corregidor_core.resum_text(stats, df_corr)
+records = corregidor_core.correccions_to_records(df_corr)
+_log("\\n" + resum + "\\n")
+json.dumps({"stats": stats, "records": records})
+    `);
+
+    resultatBytes = pyodide.globals.get("out_bytes").toJs();
+    mostrarResultats(JSON.parse(result));
+
+    const stamp = new Date().toISOString().slice(0,19).replace(/[-:T]/g, "").slice(0,15);
+    const base = fitxerNom.replace(/\.(xlsx|xls)$/i, "");
+    resultatNom = `${base}_CORREGIT_${stamp}.xlsx`;
+  } catch (err) {
+    log("\n❌ ERROR: " + err.message + "\n");
+  } finally {
+    $("btn-processar").disabled = false;
+    setProgress(100, 100);
+  }
+}
+
+function mostrarResultats(meta) {
+  const s = meta.stats;
+  $("stats").innerHTML = `
+    <div class="stat"><span class="num">${s.total_registres}</span><span class="lbl">Registres</span></div>
+    <div class="stat"><span class="num">${s.correccions_totals}</span><span class="lbl">Correccions</span></div>
+    <div class="stat"><span class="num">${s.pct_corregits}%</span><span class="lbl">% corregit</span></div>
+  `;
+  const recs = meta.records;
+  const taula = $("taula-correccions");
+  if (recs.length === 0) {
+    taula.innerHTML = "<tr><td>No s'han trobat correccions.</td></tr>";
+  } else {
+    const cols = Object.keys(recs[0]);
+    let html = "<thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+    for (const r of recs) html += "<tr>" + cols.map(c => `<td>${r[c] ?? ""}</td>`).join("") + "</tr>";
+    taula.innerHTML = html + "</tbody>";
+  }
+  $("resultats").classList.remove("hidden");
+}
+
+function descarregar() {
+  if (!resultatBytes) return;
+  const blob = new Blob([resultatBytes], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = resultatNom || "Ambits_CORREGIT.xlsx"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  initPyodide().catch(e => {
+    $("carregant").textContent = "❌ No s'ha pogut carregar Pyodide: " + e.message;
+  });
+  const dz = $("dropzone"), fi = $("file-input");
+  fi.addEventListener("change", (e) => { if (e.target.files[0]) carregarFitxer(e.target.files[0]); });
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("dragover"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("dragover"));
+  dz.addEventListener("drop", (e) => {
+    e.preventDefault(); dz.classList.remove("dragover");
+    if (e.dataTransfer.files[0]) carregarFitxer(e.dataTransfer.files[0]);
+  });
+  $("btn-processar").addEventListener("click", processar);
+  $("btn-descarregar").addEventListener("click", descarregar);
+});
+</script>
+</body>
+</html>
