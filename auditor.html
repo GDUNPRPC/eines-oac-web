@@ -153,11 +153,24 @@ async function initPyodide() {
   pyodide = await loadPyodide({ indexURL: "pyodide/" });
 
   estatCarrega("⏳ (2/4) Carregant paquets…");
-  // Càrrega SEQÜENCIAL (un a un): carregar-los en paral·lel feia que algunes
-  // descàrregues caiguessin i deixessin dependències sense instal·lar.
+  // Càrrega SEQÜENCIAL + VERIFICACIÓ + REINTENTS: després de carregar cada
+  // paquet, comprovem que realment s'importa; si una descàrrega falla (p. ex.
+  // un 522 puntual del servidor), es reintenta. Així cap dependència queda fora.
+  const MODULS = {"six":"six","python-dateutil":"dateutil","pytz":"pytz","packaging":"packaging","micropip":"micropip","numpy":"numpy","pandas":"pandas"};
   for (const p of ["six", "python-dateutil", "pytz", "packaging", "micropip", "numpy", "pandas"]) {
     estatCarrega("⏳ (2/4) Carregant " + p + "…");
-    await pyodide.loadPackage(p);
+    let ok = false;
+    for (let intent = 1; intent <= 5 && !ok; intent++) {
+      try {
+        await pyodide.loadPackage(p);
+        await pyodide.runPythonAsync("import " + MODULS[p]);
+        ok = true;
+      } catch (e) {
+        if (intent === 5) throw new Error("No s'ha pogut carregar '" + p + "' després de 5 intents: " + e.message);
+        estatCarrega("⏳ (2/4) Reintentant " + p + " (" + intent + ")…");
+        await new Promise(r => setTimeout(r, 1200));
+      }
+    }
   }
 
   estatCarrega("⏳ (3/4) Instal·lant openpyxl…");
