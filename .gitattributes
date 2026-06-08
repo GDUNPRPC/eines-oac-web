@@ -1,0 +1,6 @@
+# Els fitxers del motor Pyodide són binaris: no convertir mai els finals de línia.
+pyodide/** -text
+*.whl binary
+*.wasm binary
+*.zip binary
+*.png binary
