@@ -168,15 +168,26 @@ async function initPyodide() {
     "et_xmlfile-2.0.0-py3-none-any.whl"
   ];
   try { pyodide.FS.mkdir("/whl"); } catch (e) {}
+  // Alguns wheels els bloqueja l'antivirus corporatiu pel CONTINGUT (p. ex.
+  // python-dateutil), independentment de l'extensió. Es serveixen com a text
+  // base64 (.txt) i es decodifiquen aquí (deixa de semblar un binari).
+  const B64 = { "python_dateutil-2.9.0.post0-py2.py3-none-any.whl": "pyodide/python_dateutil.txt" };
+  function b64ToBytes(s) {
+    const bin = atob(s.trim());
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
   for (const w of WHEELS) {
     estatCarrega("⏳ (2/4) Descarregant " + w.split("-")[0] + "…");
-    const url = "pyodide/" + w.replace(/\.whl$/, ".zip");
+    const esB64 = B64[w];
+    const url = esB64 ? esB64 : "pyodide/" + w.replace(/\.whl$/, ".zip");
     let buf = null;
     for (let intent = 1; intent <= 5 && !buf; intent++) {
       try {
         const resp = await fetch(url);
         if (!resp.ok) throw new Error("HTTP " + resp.status);
-        buf = new Uint8Array(await resp.arrayBuffer());
+        buf = esB64 ? b64ToBytes(await resp.text()) : new Uint8Array(await resp.arrayBuffer());
       } catch (e) {
         if (intent === 5) throw new Error("No s'ha pogut descarregar " + w + ": " + e.message);
         estatCarrega("⏳ (2/4) Reintentant " + w.split("-")[0] + " (" + intent + ")…");
