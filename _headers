@@ -1,0 +1,6 @@
+# Servir els wheels (.whl) com a application/zip en lloc d'octet-stream.
+# Alguns proxies corporatius bloquegen/escanegen octet-stream per sobre d'uns KB,
+# però deixen passar application/zip (com el python_stdlib.zip, que carrega bé).
+# Pyodide processa els bytes igual, sigui quin sigui el Content-Type.
+/pyodide/*.whl
+  Content-Type: application/zip

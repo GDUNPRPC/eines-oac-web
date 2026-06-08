@@ -130,34 +130,59 @@ async function initPyodide() {
   estatCarrega("⏳ (1/4) Carregant Pyodide…");
   pyodide = await loadPyodide({ indexURL: "pyodide/" });
 
-  estatCarrega("⏳ (2/4) Carregant paquets…");
-  // Càrrega SEQÜENCIAL + VERIFICACIÓ + REINTENTS: després de carregar cada
-  // paquet, comprovem que realment s'importa; si una descàrrega falla (p. ex.
-  // un 522 puntual del servidor), es reintenta. Així cap dependència queda fora.
-  const MODULS = {"six":"six","python-dateutil":"dateutil","pytz":"pytz","packaging":"packaging","micropip":"micropip","numpy":"numpy","pandas":"pandas"};
-  for (const p of ["six", "python-dateutil", "pytz", "packaging", "micropip", "numpy", "pandas"]) {
-    estatCarrega("⏳ (2/4) Carregant " + p + "…");
-    let ok = false;
-    for (let intent = 1; intent <= 5 && !ok; intent++) {
+  // Els paquets es serveixen amb extensió .zip (el proxy corporatiu bloqueja els
+  // .whl per sobre d'uns KB). Es descarreguen, s'escriuen al sistema de fitxers
+  // de Pyodide amb el nom .whl real i s'instal·len amb micropip (sense xarxa).
+  estatCarrega("⏳ (2/4) Descarregant paquets…");
+  const WHEELS = [
+    "packaging-23.2-py3-none-any.whl",
+    "micropip-0.6.0-py3-none-any.whl",
+    "numpy-1.26.4-cp312-cp312-pyodide_2024_0_wasm32.whl",
+    "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+    "pytz-2024.1-py2.py3-none-any.whl",
+    "six-1.16.0-py2.py3-none-any.whl",
+    "pandas-2.2.0-cp312-cp312-pyodide_2024_0_wasm32.whl",
+    "openpyxl-3.1.5-py2.py3-none-any.whl",
+    "et_xmlfile-2.0.0-py3-none-any.whl"
+  ];
+  try { pyodide.FS.mkdir("/whl"); } catch (e) {}
+  for (const w of WHEELS) {
+    estatCarrega("⏳ (2/4) Descarregant " + w.split("-")[0] + "…");
+    const url = "pyodide/" + w.replace(/\.whl$/, ".zip");
+    let buf = null;
+    for (let intent = 1; intent <= 5 && !buf; intent++) {
       try {
-        await pyodide.loadPackage(p);
-        await pyodide.runPythonAsync("import " + MODULS[p]);
-        ok = true;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        buf = new Uint8Array(await resp.arrayBuffer());
       } catch (e) {
-        if (intent === 5) throw new Error("No s'ha pogut carregar '" + p + "' després de 5 intents: " + e.message);
-        estatCarrega("⏳ (2/4) Reintentant " + p + " (" + intent + ")…");
+        if (intent === 5) throw new Error("No s'ha pogut descarregar " + w + ": " + e.message);
+        estatCarrega("⏳ (2/4) Reintentant " + w.split("-")[0] + " (" + intent + ")…");
         await new Promise(r => setTimeout(r, 1200));
       }
     }
+    pyodide.FS.writeFile("/whl/" + w, buf);
   }
 
-  estatCarrega("⏳ (3/4) Instal·lant openpyxl…");
-  const baseWheels = new URL("pyodide/", location.href).href;
-  pyodide.globals.set("OPENPYXL_URL", baseWheels + "openpyxl-3.1.5-py2.py3-none-any.whl");
-  pyodide.globals.set("ETXML_URL", baseWheels + "et_xmlfile-2.0.0-py3-none-any.whl");
+  estatCarrega("⏳ (3/4) Instal·lant paquets…");
   await pyodide.runPythonAsync(`
+import zipfile
+SITE = '/lib/python3.12/site-packages'
+# Bootstrap de micropip (i la seva dependència packaging) descomprimint el wheel.
+for _w in ['packaging-23.2-py3-none-any.whl', 'micropip-0.6.0-py3-none-any.whl']:
+    with zipfile.ZipFile('/whl/' + _w) as _z:
+        _z.extractall(SITE)
 import micropip
-await micropip.install([OPENPYXL_URL, ETXML_URL], deps=False)
+await micropip.install([
+    'emfs:/whl/numpy-1.26.4-cp312-cp312-pyodide_2024_0_wasm32.whl',
+    'emfs:/whl/python_dateutil-2.9.0.post0-py2.py3-none-any.whl',
+    'emfs:/whl/pytz-2024.1-py2.py3-none-any.whl',
+    'emfs:/whl/six-1.16.0-py2.py3-none-any.whl',
+    'emfs:/whl/pandas-2.2.0-cp312-cp312-pyodide_2024_0_wasm32.whl',
+    'emfs:/whl/openpyxl-3.1.5-py2.py3-none-any.whl',
+    'emfs:/whl/et_xmlfile-2.0.0-py3-none-any.whl',
+], deps=False)
+import pandas, openpyxl
 `);
 
   estatCarrega("⏳ (4/4) Preparant l'aplicació…");
