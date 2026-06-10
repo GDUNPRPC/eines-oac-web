@@ -5,8 +5,63 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Eines OAC — Mossos d'Esquadra</title>
 <link rel="stylesheet" href="estils.css">
+<style>
+  #login-overlay {
+    position: fixed; inset: 0;
+    background: #1a2535;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+  }
+  #login-box {
+    background: #fff;
+    border-radius: 14px;
+    padding: 36px 32px 28px;
+    width: 320px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+    text-align: center;
+  }
+  #login-box img { height: 52px; margin-bottom: 12px; }
+  #login-box h2 { margin: 0 0 4px; color: #1F4E78; font-size: 1.2rem; }
+  #login-box p  { margin: 0 0 20px; font-size: 0.85rem; color: #666; }
+  #login-box input[type=password] {
+    display: block; width: 100%;
+    padding: 10px 12px; font-size: 1rem;
+    border: 1.5px solid #ccd6e0; border-radius: 8px;
+    outline: none; margin-bottom: 12px;
+    letter-spacing: 0.1em;
+  }
+  #login-box input[type=password]:focus { border-color: #1F4E78; }
+  #login-box button {
+    width: 100%; padding: 11px;
+    font-size: 1rem; font-weight: bold;
+    background: #1F4E78; color: #fff;
+    border: none; border-radius: 8px; cursor: pointer;
+  }
+  #login-box button:hover { background: #163a5a; }
+  #login-error {
+    color: #c0392b; font-size: 0.85rem;
+    min-height: 1.2em; margin-top: 10px;
+  }
+  #app-content { display: none; }
+</style>
 </head>
 <body>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+  <div id="login-box">
+    <img src="logo_mossos.png" alt="Mossos" onerror="this.style.display='none'">
+    <h2>Eines OAC</h2>
+    <p>Mossos d'Esquadra · Regió Policial Central</p>
+    <input type="password" id="login-pass" placeholder="Contrasenya" autofocus
+           onkeydown="if(event.key==='Enter')verificarLogin()">
+    <button onclick="verificarLogin()">Accedir</button>
+    <div id="login-error"></div>
+  </div>
+</div>
+
+<!-- CONTINGUT PRINCIPAL (ocult fins al login) -->
+<div id="app-content">
 <header>
   <img src="logo_mossos.png" alt="Mossos" onerror="this.style.display='none'">
   <div>
@@ -41,5 +96,52 @@
 <footer>
   Eines OAC · Desenvolupat per TIP 15713 · El processament es realitza localment al navegador (Pyodide / WebAssembly).
 </footer>
+</div>
+
+<script>
+const HASH_OK = "ea3337a122e256142f8d8acd5bfaaee841b89b6a8edea4a4bf0bb252ad04c689";
+const SESSIO_KEY = "oac_auth";
+const MAX_INTENTS = 5;
+
+let intents = 0;
+
+async function sha256(text) {
+  const buf = await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2,"0")).join("");
+}
+
+async function verificarLogin() {
+  const pass = document.getElementById("login-pass").value;
+  const err  = document.getElementById("login-error");
+  if (!pass) { err.textContent = "Introdueix la contrasenya."; return; }
+
+  const hash = await sha256(pass);
+  if (hash === HASH_OK) {
+    sessionStorage.setItem(SESSIO_KEY, "1");
+    document.getElementById("login-overlay").style.display = "none";
+    document.getElementById("app-content").style.display = "block";
+  } else {
+    intents++;
+    const restants = MAX_INTENTS - intents;
+    document.getElementById("login-pass").value = "";
+    document.getElementById("login-pass").focus();
+    if (restants <= 0) {
+      err.textContent = "Massa intents fallits. Recarrega la pàgina per tornar a intentar-ho.";
+      document.getElementById("login-pass").disabled = true;
+      document.querySelector("#login-box button").disabled = true;
+    } else {
+      err.textContent = `Contrasenya incorrecta. Intents restants: ${restants}`;
+    }
+  }
+}
+
+// Si ja havia fet login en aquesta sessió, saltar el login directament
+if (sessionStorage.getItem(SESSIO_KEY) === "1") {
+  document.getElementById("login-overlay").style.display = "none";
+  document.getElementById("app-content").style.display = "block";
+}
+</script>
 </body>
 </html>
